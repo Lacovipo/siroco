@@ -1,0 +1,233 @@
+use crate::perft::{perft, perft_divide};
+use crate::position::Position;
+use crate::search::{search, SearchLimits};
+use crate::types::*;
+
+use std::io::{self, BufRead};
+
+const NAME: &str = "Siroco";
+const VERSION: &str = "0.1.0";
+const AUTHOR: &str = "Muse Spark";
+
+pub fn run() {
+    let mut pos = Position::new();
+    let stdin = io::stdin();
+    let mut line = String::new();
+
+    loop {
+        line.clear();
+        // Use lock each iteration
+        let bytes = stdin.lock().read_line(&mut line).unwrap();
+        if bytes == 0 {
+            break;
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let tokens: Vec<String> = trimmed.split_whitespace().map(|s| s.to_string()).collect();
+        if tokens.is_empty() {
+            continue;
+        }
+        let cmd = tokens[0].as_str();
+        match cmd {
+            "uci" => {
+                println!("id name {} {}", NAME, VERSION);
+                println!("id author {}", AUTHOR);
+                // options
+                println!("option name Hash type spin default 16 min 1 max 1024");
+                println!("option name Threads type spin default 1 min 1 max 1");
+                println!("uciok");
+            }
+            "isready" => {
+                println!("readyok");
+            }
+            "ucinewgame" => {
+                pos = Position::new();
+            }
+            "position" => {
+                // position [fen <fen> | startpos] [moves <move1> ...]
+                if tokens.len() < 2 {
+                    continue;
+                }
+                let mut idx = 1;
+                let mut fen_str = String::new();
+                if tokens[idx] == "startpos" {
+                    fen_str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1".to_string();
+                    idx += 1;
+                } else if tokens[idx] == "fen" {
+                    idx += 1;
+                    // fen consists of 6 parts
+                    let mut parts = Vec::new();
+                    while idx < tokens.len() && tokens[idx] != "moves" {
+                        parts.push(tokens[idx].clone());
+                        idx += 1;
+                    }
+                    fen_str = parts.join(" ");
+                } else {
+                    continue;
+                }
+                match Position::from_fen(&fen_str) {
+                    Ok(mut new_pos) => pos = new_pos,
+                    Err(e) => {
+                        eprintln!("info string FEN error: {}", e);
+                        continue;
+                    }
+                }
+                // handle moves
+                if idx < tokens.len() && tokens[idx] == "moves" {
+                    idx += 1;
+                    while idx < tokens.len() {
+                        let mv_str = &tokens[idx];
+                        if let Some(mv) = Move::from_uci(mv_str) {
+                            // verify legal
+                            let mut list = MoveList::new();
+                            crate::movegen::generate_legal(&mut pos, &mut list);
+                            let mut found = false;
+                            for &legal in list.as_slice() {
+                                if legal.from_sq() == mv.from_sq()
+                                    && legal.to_sq() == mv.to_sq()
+                                    && legal.promotion() == mv.promotion()
+                                {
+                                    pos.make_move(legal);
+                                    found = true;
+                                    break;
+                                }
+                            }
+                            if !found {
+                                // try exact move (maybe promo char case)
+                                // As fallback, try make_move directly if piece exists
+                                // But we warn
+                                eprintln!("info string illegal move in position: {}", mv_str);
+                                // attempt to make as given if pseudo-legal? For robustness, try to make
+                                // Find if any legal has same from/to ignoring promo case?
+                                // Just skip
+                            }
+                        } else {
+                            eprintln!("info string bad move format: {}", mv_str);
+                        }
+                        idx += 1;
+                    }
+                }
+            }
+            "go" => {
+                let params = tokens[1..].to_vec();
+                let limits = SearchLimits::from_go_params(&params);
+                // For perft-like go, handle if no limits and depth not set? Use default.
+                let (best, _score) = search(&mut pos, limits);
+                if best.is_null() {
+                    println!("bestmove 0000");
+                } else {
+                    println!("bestmove {}", best.to_uci());
+                }
+            }
+            "stop" => {
+                // In single-threaded search, we are not searching while waiting for input,
+                // so stop is no-op. In future threaded version, this will signal stop flag.
+            }
+            "quit" | "exit" => break,
+            "d" | "display" | "board" => {
+                print_board(&pos);
+            }
+            "eval" => {
+                let score = crate::eval::evaluate(&pos);
+                println!("info string eval {} (side to move)", score);
+                println!("FEN: {}", pos.to_fen());
+            }
+            "perft" => {
+                if tokens.len() < 2 {
+                    println!("info string usage: perft <depth>");
+                    continue;
+                }
+                let depth: u32 = tokens[1].parse().unwrap_or(0);
+                let mut total = 0u64;
+                let start = std::time::Instant::now();
+                // For depth 0 just 1
+                if depth == 0 {
+                    println!("info string perft 0 = 1");
+                } else {
+                    let divide = perft_divide(&mut pos, depth);
+                    for (uci, nodes) in &divide {
+                        println!("{}: {}", uci, nodes);
+                        total += nodes;
+                    }
+                    let elapsed = start.elapsed().as_millis();
+                    println!("Nodes: {}", total);
+                    println!("Time: {} ms", elapsed);
+                    if elapsed > 0 {
+                        println!("NPS: {}", total * 1000 / elapsed as u64);
+                    }
+                    // also verify with perft count
+                    let check = perft(&mut pos, depth);
+                    assert_eq!(check, total);
+                }
+            }
+            "fen" => {
+                println!("{}", pos.to_fen());
+            }
+            "setoption" => {
+                // name <id> value <x>
+                // For now just acknowledge, no hash/threads handling
+                // eprintln!("info string setoption not implemented");
+            }
+            "bench" => {
+                // simple bench: search startpos depth 12?
+                let depth = if tokens.len() > 1 {
+                    tokens[1].parse::<u32>().unwrap_or(6)
+                } else {
+                    12
+                };
+                bench(depth);
+            }
+            _ => {
+                eprintln!("info string unknown command: {}", cmd);
+            }
+        }
+        // flush
+        use std::io::Write;
+        std::io::stdout().flush().unwrap();
+    }
+}
+
+fn print_board(pos: &Position) {
+    println!(" +---+---+---+---+---+---+---+---+");
+    for rank in (0..8).rev() {
+        print!("{} |", rank + 1);
+        for file in 0..8 {
+            let sq = make_square(file, rank);
+            let p = pos.board[sq as usize];
+            let c = if p == NO_PIECE {
+                ' '
+            } else {
+                let pt = piece_type(p);
+                let mut ch = pt.to_char();
+                if piece_color(p) == Color::White {
+                    ch = ch.to_ascii_uppercase();
+                }
+                ch
+            };
+            print!(" {} |", c);
+        }
+        println!();
+        println!(" +---+---+---+---+---+---+---+---+");
+    }
+    println!("   a   b   c   d   e   f   g   h");
+    println!("FEN: {}", pos.to_fen());
+    println!("Side: {}", if pos.side_to_move == Color::White { "white" } else { "black" });
+    println!("Castling: {}", pos.castling);
+    println!("En passant: {}", if pos.en_passant == NO_SQUARE { "-".to_string() } else { square_name(pos.en_passant) });
+    println!("Hash: {:016x}", pos.hash);
+    println!("Halfmove: {} Fullmove: {}", pos.halfmove, pos.fullmove);
+}
+
+fn bench(depth: u32) {
+    let start = std::time::Instant::now();
+    let mut pos = Position::new();
+    let limits = SearchLimits {
+        depth: Some(depth),
+        ..Default::default()
+    };
+    let (best, score) = search(&mut pos, limits);
+    let elapsed = start.elapsed().as_millis();
+    println!("bench depth {} best {} score {} time {} ms", depth, best.to_uci(), score, elapsed);
+}

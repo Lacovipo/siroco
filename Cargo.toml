@@ -1,0 +1,27 @@
+[package]
+name = "siroco"
+version = "0.1.0"
+edition = "2021"
+description = "Siroco - Motor de ajedrez UCI escrito en Rust"
+authors = ["Muse Spark"]
+license = "MIT"
+repository = "https://github.com/siroco-engine/siroco"
+keywords = ["chess", "uci", "engine"]
+readme = "README.md"
+
+[dependencies]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.dev]
+opt-level = 0
+
+[profile.bench]
+opt-level = 3
+lto = "thin"
+codegen-units = 1

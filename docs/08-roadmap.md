@@ -7,12 +7,12 @@
 - TT 16MB (1M entradas) con mate adjust, PVS, Killer[64][2], History[2][64][64].
 - Bench depth8 175M→0.8M nodos, mismo score.
 
-## V0.3 — Poda/Reducción (siguiente fase propuesta)
-- **Null Move Pruning:** `R=3` si `!in_check && depth>=3 && eval>=beta` → `make_null` + `depth-R`.
-- **LMR:** para `moves_searched>3 && depth>=3 && !capture && !promo && !in_check` → `depth-1` null-window, re-search si `>alpha`.
-- **Aspiration Windows:** ID con `window=25` alrededor de `prev_score`, ampliar a `50,100,INF` si falla.
-- **Futility:** si `depth==1 && !in_check && eval+120+... <= alpha` → podar quiets.
-- **Est. elo:** +120-150 sobre V0.2 (medido vía SPRT 200g `10+0.1`).
+## V0.3 — Null + LMR + Aspiration + Futility (actual, v0.3.0)
+- **Null Move:** `R=2/3` si `depth>=3 && !in_check && has_non_pawn_material`, `make_null/unmake_null`.
+- **LMR:** `moves_searched>=4 && depth>=3 && quiet && !killer` → `depth-1 - reduction` (1-2 según history) + re-search si `>alpha`.
+- **Aspiration:** `prev ±25` desde depth4, dobla a 50/100/INF si fail.
+- **Futility:** `depth==1 && stand_pat+120 <= alpha && quiet` → skip.
+- **Medido:** -95% nodos bench8 vs V0.2, score idéntico.
 
 ## V0.4 — Syzygy y Tuning
 - Syzygy 5 piezas (decisión del autor: implement antes de NNUE para finales). `TB probe` en root y `qsearch` si `halfmove==0` y material <=5.

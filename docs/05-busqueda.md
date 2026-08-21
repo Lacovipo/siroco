@@ -49,9 +49,17 @@ else {
 
 **Wrapper** `search:510` crea TT 16MB efímero para tests/bench; UCI usa el persistente.
 
+## V0.3 — Null + LMR + Aspiration + Futility (`src/search.rs:375`)
+
+- **Null:** `if can_null && depth>=3 && !in_check && has_non_pawn_material && beta<MATE` → `make_null(); -negamax(depth-1-R, -beta, -beta+1);` R=2/3.
+- **Futility:** `depth==1 && !in_check && !cap && !killer && stand_pat+120 <= alpha && moves_searched>0` → skip quiet.
+- **LMR:** `depth>=3 && moves_searched>=4 && quiet && !killer` → `reduction=1 (+1 si hist<-1000 && depth>=6)` → `new_depth=depth-1-reduction` null-window, re-search si `>alpha`.
+- **Aspiration:** depth≥4 `alpha=prev-25 beta=prev+25`, loop dobla a 50/100/INF hasta dentro.
+
 ## Métricas
 
-- depth4 startpos V0.1 95k nodos → V0.2 2.5k (-97%)
-- depth8 bench V0.1 175M/86s → V0.2 873k/0.7s (-99.5% nodos, 120x más rápido)
-- PV completo: `info pv b1c3 b8c6 g1f3 g8f6 ...` extraído de TT.
-- hashfull 43‰ depth6, 488‰ depth8.
+- depth4 startpos V0.1 95k → V0.2 2.5k (-97%) → **V0.3 980 (-98.9% vs V0.1)**
+- depth6 V0.2 52k → **V0.3 6.7k (-87%)**
+- depth8 bench V0.1 175M/86s → V0.2 873k/0.7s → **V0.3 37k/24ms (-95% vs V0.2)**
+- PV idéntico, score idéntico, `mate 1` sigue `f7g7`/`h5f7`.
+- hashfull depth8 23‰ (menos por poda).

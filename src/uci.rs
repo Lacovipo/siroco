@@ -8,7 +8,7 @@ use crate::types::*;
 use std::io::{self, BufRead};
 
 const NAME: &str = "Siroco";
-const VERSION: &str = "0.2.0";
+const VERSION: &str = "0.3.0";
 const AUTHOR: &str = "Muse Spark";
 
 pub fn run() {

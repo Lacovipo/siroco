@@ -725,4 +725,50 @@ impl Position {
         }
         false
     }
+
+    pub fn has_non_pawn_material(&self, color: Color) -> bool {
+        let idx = color as usize;
+        (self.bb[idx][PieceType::Knight as usize]
+            | self.bb[idx][PieceType::Bishop as usize]
+            | self.bb[idx][PieceType::Rook as usize]
+            | self.bb[idx][PieceType::Queen as usize])
+            != 0
+    }
+
+    pub fn make_null(&mut self) {
+        let state = State {
+            castling: self.castling,
+            en_passant: self.en_passant,
+            halfmove: self.halfmove,
+            captured: NO_PIECE,
+            hash: self.hash,
+        };
+        self.history.push(state);
+        let z = zobrist();
+        if self.en_passant != NO_SQUARE {
+            self.hash ^= z.en_passant_keys[square_file(self.en_passant) as usize];
+            self.en_passant = NO_SQUARE;
+        }
+        // Toggle side
+        self.hash ^= z.side_key;
+        self.side_to_move = self.side_to_move.opposite();
+        // halfmove for null: increment (as if a quiet move)
+        self.halfmove = self.halfmove.wrapping_add(1);
+        // fullmove? Null is not a real ply for game, but for search we don't need to track.
+        // hash_history for repetition: push new hash
+        self.hash_history.push(self.hash);
+        debug_assert_eq!(self.hash, self.compute_hash());
+    }
+
+    pub fn unmake_null(&mut self) {
+        let state = self.history.pop().expect("no history for null");
+        // pop hash_history
+        self.hash_history.pop();
+        self.castling = state.castling;
+        self.en_passant = state.en_passant;
+        self.halfmove = state.halfmove;
+        self.hash = state.hash;
+        self.side_to_move = self.side_to_move.opposite();
+        debug_assert_eq!(self.hash, self.compute_hash());
+    }
 }

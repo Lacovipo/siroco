@@ -167,8 +167,6 @@ impl<'a> Searcher<'a> {
                 PieceType::Knight => 100,
                 _ => 0,
             };
-            // promotions are captures as well but already high
-            // add victim if capture promo
             if victim != NO_PIECE {
                 let victim_val = match piece_type(victim) {
                     PieceType::Pawn => 100,
@@ -206,14 +204,11 @@ impl<'a> Searcher<'a> {
             score += 10 * victim_val - attacker_val + 1000;
             return score;
         }
-        // quiet: killer + history
         let killer_score = self.killers.score_killer(ply, mv);
         if killer_score != 0 {
             return killer_score;
         }
         let hist = self.history.score(self.pos.side_to_move as usize, mv);
-        // history range -16384..16384, scale down
-        // give small weight so captures still above? quiet captures already handled
         score += hist / 32;
         score
     }
@@ -237,7 +232,6 @@ fn qsearch(searcher: &mut Searcher, mut alpha: i32, beta: i32, ply: usize) -> i3
         return 0;
     }
 
-    // TT probe in qsearch
     let hash = searcher.pos.hash;
     if let Some(entry) = searcher.tt.probe(hash) {
         let (score, _, _, flag) = searcher.tt.retrieve_with_correction(entry, ply as i32);
@@ -284,7 +278,6 @@ fn qsearch(searcher: &mut Searcher, mut alpha: i32, beta: i32, ply: usize) -> i3
         }
     }
 
-    // TT move for ordering in qsearch as well
     let tt_move = searcher
         .tt
         .probe(hash)
@@ -310,7 +303,6 @@ fn qsearch(searcher: &mut Searcher, mut alpha: i32, beta: i32, ply: usize) -> i3
             return alpha;
         }
         if score >= beta {
-            // store lower bound
             searcher.tt.store(hash, mv, beta, 0, TT_LOWER, ply as i32);
             return beta;
         }
@@ -323,7 +315,6 @@ fn qsearch(searcher: &mut Searcher, mut alpha: i32, beta: i32, ply: usize) -> i3
         }
     }
 
-    // store in TT
     let flag = if best_score <= original_alpha {
         TT_UPPER
     } else if best_score >= beta {
@@ -340,7 +331,14 @@ fn qsearch(searcher: &mut Searcher, mut alpha: i32, beta: i32, ply: usize) -> i3
     alpha
 }
 
-fn negamax(searcher: &mut Searcher, depth: i32, mut alpha: i32, beta: i32, ply: usize) -> i32 {
+fn negamax(
+    searcher: &mut Searcher,
+    depth: i32,
+    mut alpha: i32,
+    beta: i32,
+    ply: usize,
+    can_null: bool,
+) -> i32 {
     if searcher.should_stop() {
         return alpha;
     }
@@ -362,18 +360,19 @@ fn negamax(searcher: &mut Searcher, depth: i32, mut alpha: i32, beta: i32, ply: 
             return alpha;
         }
     }
-    if (mate_beta as i32) < beta {
+    if mate_beta < beta {
         if mate_beta <= alpha {
             return mate_beta;
         }
     }
 
+    let in_check = is_in_check(searcher.pos);
     let hash = searcher.pos.hash;
     let mut tt_move = Move::NULL;
-    let mut tt_hit = false;
     let mut tt_score = 0;
     let mut tt_flag = 0;
     let mut tt_depth = 0;
+    let mut tt_hit = false;
     if let Some(entry) = searcher.tt.probe(hash) {
         let (score, mv, d, flag) = searcher.tt.retrieve_with_correction(entry, ply as i32);
         tt_move = mv;
@@ -400,6 +399,34 @@ fn negamax(searcher: &mut Searcher, depth: i32, mut alpha: i32, beta: i32, ply: 
         }
     }
 
+    // Null move pruning
+    if can_null
+        && depth >= 3
+        && !in_check
+        && searcher.pos.has_non_pawn_material(searcher.pos.side_to_move)
+        && ply > 0
+        && beta < MATE - 100
+        && beta > -MATE + 100
+    {
+        let r: i32 = if depth > 6 { 3 } else { 2 };
+        searcher.pos.make_null();
+        let null_score = -negamax(searcher, depth - 1 - r, -beta, -beta + 1, ply + 1, false);
+        searcher.pos.unmake_null();
+        if searcher.should_stop() {
+            return alpha;
+        }
+        if null_score >= beta {
+            return beta;
+        }
+    }
+
+    // Futility pruning setup for shallow depths
+    let stand_pat = if !in_check && depth <= 2 {
+        evaluate(searcher.pos)
+    } else {
+        0
+    };
+
     let mut list = MoveList::new();
     generate_legal(searcher.pos, &mut list);
     if list.is_empty() {
@@ -414,7 +441,6 @@ fn negamax(searcher: &mut Searcher, depth: i32, mut alpha: i32, beta: i32, ply: 
         }
     }
 
-    // Move ordering
     let mut scored: Vec<(Move, i32)> = list
         .as_slice()
         .iter()
@@ -426,23 +452,63 @@ fn negamax(searcher: &mut Searcher, depth: i32, mut alpha: i32, beta: i32, ply: 
     let mut best_move = Move::NULL;
     let original_alpha = alpha;
     let mut moves_searched = 0;
-
-    // For history penalty, collect quiets
     let mut quiets_searched: Vec<Move> = Vec::new();
 
     for (mv, _) in scored {
         let is_cap = searcher.is_capture(mv) || mv.is_promotion();
+        let is_killer = searcher.killers.is_killer(ply, mv);
+
+        // Futility pruning: depth 1, not in check, quiet, not killer, and stand_pat + margin <= alpha
+        if depth == 1
+            && !in_check
+            && !is_cap
+            && !is_killer
+            && moves_searched > 0
+            && stand_pat + 120 <= alpha
+            && best_score > -MATE + 100
+        {
+            continue;
+        }
+
+        let mut new_depth = depth - 1;
+        let mut is_reduced = false;
+        let mut reduction = 0;
+
+        // LMR: Late Move Reduction for quiets after first few moves
+        if depth >= 3
+            && moves_searched >= 4
+            && !is_cap
+            && !in_check
+            && !is_killer
+        {
+            // history low?
+            let hist = searcher.history.score(searcher.pos.side_to_move as usize, mv);
+            let base_reduction = if depth >= 6 && moves_searched >= 10 { 2 } else { 1 };
+            // reduce more if history negative
+            reduction = if hist < -1000 { base_reduction + 1 } else { base_reduction };
+            reduction = reduction.min(depth - 1);
+            if reduction > 0 {
+                new_depth = depth - 1 - reduction;
+                is_reduced = true;
+            }
+        }
+
         searcher.pos.make_move(mv);
         let score;
         if moves_searched == 0 {
-            score = -negamax(searcher, depth - 1, -beta, -alpha, ply + 1);
+            score = -negamax(searcher, new_depth, -beta, -alpha, ply + 1, true);
         } else {
-            // PVS null window
-            let mut null_score = -negamax(searcher, depth - 1, -alpha - 1, -alpha, ply + 1);
-            if null_score > alpha && null_score < beta {
-                null_score = -negamax(searcher, depth - 1, -beta, -alpha, ply + 1);
+            // PVS null window, with possible LMR
+            let mut null_score = -negamax(searcher, new_depth, -alpha - 1, -alpha, ply + 1, true);
+            if is_reduced && null_score > alpha {
+                // re-search at full depth if reduced search failed high
+                null_score = -negamax(searcher, depth - 1, -alpha - 1, -alpha, ply + 1, true);
             }
-            score = null_score;
+            if null_score > alpha && null_score < beta {
+                score = -negamax(searcher, depth - 1, -beta, -alpha, ply + 1, true);
+            } else {
+                score = null_score;
+            }
         }
         searcher.pos.unmake_move(mv);
 
@@ -462,11 +528,9 @@ fn negamax(searcher: &mut Searcher, depth: i32, mut alpha: i32, beta: i32, ply: 
             alpha = score;
         }
         if alpha >= beta {
-            // beta cutoff
             if !is_cap {
                 searcher.killers.store(ply, mv);
                 searcher.history.update_quiet(searcher.pos.side_to_move as usize, mv, depth, true);
-                // penalize quiets that were searched earlier
                 for &q in &quiets_searched {
                     searcher.history.update_quiet(searcher.pos.side_to_move as usize, q, depth, false);
                 }
@@ -479,7 +543,6 @@ fn negamax(searcher: &mut Searcher, depth: i32, mut alpha: i32, beta: i32, ply: 
         moves_searched += 1;
     }
 
-    // TT store
     let flag = if best_score <= original_alpha {
         TT_UPPER
     } else if best_score >= beta {
@@ -497,19 +560,14 @@ fn negamax(searcher: &mut Searcher, depth: i32, mut alpha: i32, beta: i32, ply: 
 fn extract_pv(pos: &mut Position, tt: &TranspositionTable) -> Vec<Move> {
     let mut pv = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    // Use a temporary pos to avoid borrow issues with TT
-    // We need to make/unmake on the same pos, but TT is shared.
-    // We'll probe via direct index without needing &mut
     for _ in 0..32 {
         let hash = pos.hash;
-        // direct probe without mutating hits
         let idx = (hash as usize) & tt.mask;
         let entry = tt.entries[idx];
         if entry.key != hash || entry.best_move.is_null() {
             break;
         }
         let mv = entry.best_move;
-        // check legality quickly
         let mut list = MoveList::new();
         generate_legal(pos, &mut list);
         if !list.as_slice().contains(&mv) {
@@ -609,13 +667,77 @@ pub fn search_with_tt(
         return (Move::NULL, 0);
     }
 
+    // Aspiration windows
+    let mut prev_score = 0;
+    let mut delta = 25;
+
     for depth in 1..=max_depth {
-        let score = negamax(&mut searcher, depth, -INF, INF, 0);
+        let mut alpha = -INF;
+        let mut beta = INF;
+        if depth >= 4 {
+            alpha = (prev_score - delta).max(-INF);
+            beta = (prev_score + delta).min(INF);
+        }
+
+        let mut score;
+        loop {
+            score = negamax(&mut searcher, depth, alpha, beta, 0, true);
+            if searcher.should_stop() {
+                break;
+            }
+            if score <= alpha {
+                // fail low
+                delta *= 2;
+                if delta > 500 {
+                    alpha = -INF;
+                    beta = INF;
+                    score = negamax(&mut searcher, depth, alpha, beta, 0, true);
+                    break;
+                }
+                alpha = (prev_score - delta).max(-INF);
+                beta = (prev_score + delta).min(INF);
+                // also need to keep beta wider? For fail low we expand alpha down
+                // continue loop to re-search
+                if score > alpha && score < beta {
+                    break;
+                }
+                // else continue
+            } else if score >= beta {
+                delta *= 2;
+                if delta > 500 {
+                    alpha = -INF;
+                    beta = INF;
+                    score = negamax(&mut searcher, depth, alpha, beta, 0, true);
+                    break;
+                }
+                alpha = (prev_score - delta).max(-INF);
+                beta = (prev_score + delta).min(INF);
+                if score > alpha && score < beta {
+                    break;
+                }
+            } else {
+                break;
+            }
+            if delta > 200 {
+                // fallback to full window to avoid infinite loops
+                alpha = -INF;
+                beta = INF;
+            }
+        }
+
         if searcher.should_stop() {
+            // if we stopped during search, don't update best
+            if searcher.best_move.is_null() {
+                break;
+            }
+            best_move = searcher.best_move;
+            best_score = prev_score; // keep old
             break;
         }
         best_move = searcher.best_move;
         best_score = score;
+        prev_score = best_score;
+        delta = 25; // reset for next depth
 
         let elapsed = searcher.start.elapsed();
         let elapsed_ms = elapsed.as_millis() as u64;
@@ -636,7 +758,6 @@ pub fn search_with_tt(
             format!("cp {}", best_score)
         };
 
-        // Extract PV from TT
         let pv_moves = extract_pv(searcher.pos, &*searcher.tt);
         let pv_str = if pv_moves.is_empty() {
             best_move.to_uci()

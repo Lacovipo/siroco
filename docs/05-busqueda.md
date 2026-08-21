@@ -56,10 +56,14 @@ else {
 - **LMR:** `depth>=3 && moves_searched>=4 && quiet && !killer` → `reduction=1 (+1 si hist<-1000 && depth>=6)` → `new_depth=depth-1-reduction` null-window, re-search si `>alpha`.
 - **Aspiration:** depth≥4 `alpha=prev-25 beta=prev+25`, loop dobla a 50/100/INF hasta dentro.
 
+## V0.4 — Extensión jaque (`src/search.rs:496`) + Eval enriquecida (`src/eval.rs:165`)
+
+- **Extensión:** tras `make_move`, `gives_check = is_in_check(pos)` → `effective_depth = new_depth+1` (undo LMR si jaque).
+- **Eval:** +190 líneas C: peones aislado/doblado/pasado, pareja alfiles, movilidad 4/3/2/1, torre abierta, escudo rey.
+
 ## Métricas
 
-- depth4 startpos V0.1 95k → V0.2 2.5k (-97%) → **V0.3 980 (-98.9% vs V0.1)**
-- depth6 V0.2 52k → **V0.3 6.7k (-87%)**
-- depth8 bench V0.1 175M/86s → V0.2 873k/0.7s → **V0.3 37k/24ms (-95% vs V0.2)**
-- PV idéntico, score idéntico, `mate 1` sigue `f7g7`/`h5f7`.
-- hashfull depth8 23‰ (menos por poda).
+- depth4 startpos V0.1 95k → V0.2 2.5k → **V0.3 980 → V0.4 863** (-99% vs V0.1)
+- depth6 V0.2 52k → V0.3 6.7k → **V0.4 7.3k** (+9% por extensión, aún -86% vs V0.2)
+- depth8 bench V0.1 175M/86s → V0.2 873k → V0.3 37k → **V0.4 47k/137ms** (+27% nodos, eval más pesada)
+- PV idéntico startpos, kiwipete `e2a6` estable, `mate 1` ok, perft idéntico.

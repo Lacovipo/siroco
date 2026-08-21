@@ -3,18 +3,18 @@
 ## V0.1 — Baseline funcional (tag v0.1.0)
 - UCI completo, bitboards, perft 32M nps, HCE simple, negamax+qsearch, ID.
 
-## V0.2 — TT + PVS + Killers/History (actual, tag v0.2.0)
-- TT 16MB (1M entradas) con mate adjust, PVS, Killer[64][2], History[2][64][64].
-- Bench depth8 175M→0.8M nodos, mismo score.
+## V0.2 — TT + PVS + Killers/History (tag v0.2.0)
+- TT 16MB con mate adjust, PVS, Killer[64][2], History[2][64][64].
 
-## V0.3 — Null + LMR + Aspiration + Futility (actual, v0.3.0)
-- **Null Move:** `R=2/3` si `depth>=3 && !in_check && has_non_pawn_material`, `make_null/unmake_null`.
-- **LMR:** `moves_searched>=4 && depth>=3 && quiet && !killer` → `depth-1 - reduction` (1-2 según history) + re-search si `>alpha`.
-- **Aspiration:** `prev ±25` desde depth4, dobla a 50/100/INF si fail.
-- **Futility:** `depth==1 && stand_pat+120 <= alpha && quiet` → skip.
-- **Medido:** -95% nodos bench8 vs V0.2, score idéntico.
+## V0.3 — Null + LMR + Aspiration + Futility (tag v0.3.0)
+- **Null Move:** `R=2/3`, **LMR:** `depth-1 - reduction`, **Aspiration:** `prev ±25`, **Futility:** `+120`.
 
-## V0.4 — Syzygy y Tuning
+## V0.4 — Evaluación Enriquecida + Extensión Jaque (actual, v0.4.0)
+- **Eval:** peones aisl/dobl/pasados, pareja alfiles, movilidad, torre abierta, escudo rey (`src/eval.rs:230`).
+- **Búsqueda:** extensión `+1` si `gives_check` (`src/search.rs:496`).
+- Medido bench8 37k→47k (+eval cost).
+
+## V0.5 — Syzygy y Tuning (siguiente)
 - Syzygy 5 piezas (decisión del autor: implement antes de NNUE para finales). `TB probe` en root y `qsearch` si `halfmove==0` y material <=5.
 - SPSA tuning de `PST` y `MG/EG` valores con 10k partidas.
 

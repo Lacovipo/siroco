@@ -475,16 +475,15 @@ fn negamax(
         let mut reduction = 0;
 
         // LMR: Late Move Reduction for quiets after first few moves
+        // (no reduction if gives check — check after make)
         if depth >= 3
             && moves_searched >= 4
             && !is_cap
             && !in_check
             && !is_killer
         {
-            // history low?
             let hist = searcher.history.score(searcher.pos.side_to_move as usize, mv);
             let base_reduction = if depth >= 6 && moves_searched >= 10 { 2 } else { 1 };
-            // reduce more if history negative
             reduction = if hist < -1000 { base_reduction + 1 } else { base_reduction };
             reduction = reduction.min(depth - 1);
             if reduction > 0 {
@@ -494,12 +493,34 @@ fn negamax(
         }
 
         searcher.pos.make_move(mv);
+        // Check extension: if move gives check, extend 1 ply
+        let gives_check = is_in_check(searcher.pos);
+        let mut effective_depth = new_depth;
+        if gives_check {
+            effective_depth += 1;
+            // if we reduced and gives check, undo reduction
+            if is_reduced {
+                is_reduced = false;
+                effective_depth = depth; // actually depth (since new_depth was depth-1 - red, +1 => depth - red)
+                // for simplicity, set to depth-1 if gave check (no reduction)
+                effective_depth = depth - 1 + 1; // = depth
+                // but cap to depth
+                if effective_depth > depth {
+                    effective_depth = depth;
+                }
+            } else {
+                // already not reduced, just extension
+                if effective_depth > depth {
+                    effective_depth = depth;
+                }
+            }
+        }
         let score;
         if moves_searched == 0 {
-            score = -negamax(searcher, new_depth, -beta, -alpha, ply + 1, true);
+            score = -negamax(searcher, effective_depth, -beta, -alpha, ply + 1, true);
         } else {
             // PVS null window, with possible LMR
-            let mut null_score = -negamax(searcher, new_depth, -alpha - 1, -alpha, ply + 1, true);
+            let mut null_score = -negamax(searcher, effective_depth, -alpha - 1, -alpha, ply + 1, true);
             if is_reduced && null_score > alpha {
                 // re-search at full depth if reduced search failed high
                 null_score = -negamax(searcher, depth - 1, -alpha - 1, -alpha, ply + 1, true);

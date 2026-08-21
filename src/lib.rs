@@ -6,3 +6,5 @@ pub mod perft;
 pub mod search;
 pub mod uci;
 pub mod debug;
+pub mod tt;
+pub mod history;

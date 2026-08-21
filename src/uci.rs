@@ -1,22 +1,26 @@
+use crate::history::{HistoryTable, KillerTable};
 use crate::perft::{perft, perft_divide};
 use crate::position::Position;
-use crate::search::{search, SearchLimits};
+use crate::search::{search_with_tt, SearchLimits};
+use crate::tt::TranspositionTable;
 use crate::types::*;
 
 use std::io::{self, BufRead};
 
 const NAME: &str = "Siroco";
-const VERSION: &str = "0.1.0";
+const VERSION: &str = "0.2.0";
 const AUTHOR: &str = "Muse Spark";
 
 pub fn run() {
     let mut pos = Position::new();
+    let mut tt = TranspositionTable::new(16);
+    let mut history = HistoryTable::new();
+    let mut killers = KillerTable::new();
     let stdin = io::stdin();
     let mut line = String::new();
 
     loop {
         line.clear();
-        // Use lock each iteration
         let bytes = stdin.lock().read_line(&mut line).unwrap();
         if bytes == 0 {
             break;
@@ -34,7 +38,6 @@ pub fn run() {
             "uci" => {
                 println!("id name {} {}", NAME, VERSION);
                 println!("id author {}", AUTHOR);
-                // options
                 println!("option name Hash type spin default 16 min 1 max 1024");
                 println!("option name Threads type spin default 1 min 1 max 1");
                 println!("uciok");
@@ -44,9 +47,11 @@ pub fn run() {
             }
             "ucinewgame" => {
                 pos = Position::new();
+                tt.clear();
+                history.clear();
+                killers.clear();
             }
             "position" => {
-                // position [fen <fen> | startpos] [moves <move1> ...]
                 if tokens.len() < 2 {
                     continue;
                 }
@@ -57,7 +62,6 @@ pub fn run() {
                     idx += 1;
                 } else if tokens[idx] == "fen" {
                     idx += 1;
-                    // fen consists of 6 parts
                     let mut parts = Vec::new();
                     while idx < tokens.len() && tokens[idx] != "moves" {
                         parts.push(tokens[idx].clone());
@@ -68,19 +72,17 @@ pub fn run() {
                     continue;
                 }
                 match Position::from_fen(&fen_str) {
-                    Ok(mut new_pos) => pos = new_pos,
+                    Ok(new_pos) => pos = new_pos,
                     Err(e) => {
                         eprintln!("info string FEN error: {}", e);
                         continue;
                     }
                 }
-                // handle moves
                 if idx < tokens.len() && tokens[idx] == "moves" {
                     idx += 1;
                     while idx < tokens.len() {
                         let mv_str = &tokens[idx];
                         if let Some(mv) = Move::from_uci(mv_str) {
-                            // verify legal
                             let mut list = MoveList::new();
                             crate::movegen::generate_legal(&mut pos, &mut list);
                             let mut found = false;
@@ -95,13 +97,7 @@ pub fn run() {
                                 }
                             }
                             if !found {
-                                // try exact move (maybe promo char case)
-                                // As fallback, try make_move directly if piece exists
-                                // But we warn
                                 eprintln!("info string illegal move in position: {}", mv_str);
-                                // attempt to make as given if pseudo-legal? For robustness, try to make
-                                // Find if any legal has same from/to ignoring promo case?
-                                // Just skip
                             }
                         } else {
                             eprintln!("info string bad move format: {}", mv_str);
@@ -113,21 +109,18 @@ pub fn run() {
             "go" => {
                 let params = tokens[1..].to_vec();
                 let limits = SearchLimits::from_go_params(&params);
-                // For perft-like go, handle if no limits and depth not set? Use default.
-                let (best, _score) = search(&mut pos, limits);
+                let (best, _score) = search_with_tt(&mut pos, limits, &mut tt, &mut history, &mut killers);
                 if best.is_null() {
                     println!("bestmove 0000");
                 } else {
                     println!("bestmove {}", best.to_uci());
                 }
             }
-            "stop" => {
-                // In single-threaded search, we are not searching while waiting for input,
-                // so stop is no-op. In future threaded version, this will signal stop flag.
-            }
+            "stop" => {}
             "quit" | "exit" => break,
             "d" | "display" | "board" => {
                 print_board(&pos);
+                println!("Hashfull: {} TT hits: {} stores: {}", tt.hashfull(), tt.hits, tt.stores);
             }
             "eval" => {
                 let score = crate::eval::evaluate(&pos);
@@ -142,7 +135,6 @@ pub fn run() {
                 let depth: u32 = tokens[1].parse().unwrap_or(0);
                 let mut total = 0u64;
                 let start = std::time::Instant::now();
-                // For depth 0 just 1
                 if depth == 0 {
                     println!("info string perft 0 = 1");
                 } else {
@@ -157,7 +149,6 @@ pub fn run() {
                     if elapsed > 0 {
                         println!("NPS: {}", total * 1000 / elapsed as u64);
                     }
-                    // also verify with perft count
                     let check = perft(&mut pos, depth);
                     assert_eq!(check, total);
                 }
@@ -166,24 +157,56 @@ pub fn run() {
                 println!("{}", pos.to_fen());
             }
             "setoption" => {
-                // name <id> value <x>
-                // For now just acknowledge, no hash/threads handling
-                // eprintln!("info string setoption not implemented");
+                // setoption name <id> value <x>
+                let mut name = String::new();
+                let mut value = String::new();
+                let mut reading_name = false;
+                let mut reading_value = false;
+                for tok in &tokens[1..] {
+                    if tok == "name" {
+                        reading_name = true;
+                        reading_value = false;
+                        continue;
+                    } else if tok == "value" {
+                        reading_name = false;
+                        reading_value = true;
+                        continue;
+                    }
+                    if reading_name {
+                        if !name.is_empty() {
+                            name.push(' ');
+                        }
+                        name.push_str(tok);
+                    } else if reading_value {
+                        if !value.is_empty() {
+                            value.push(' ');
+                        }
+                        value.push_str(tok);
+                    }
+                }
+                let name_lc = name.to_ascii_lowercase();
+                if name_lc == "hash" {
+                    if let Ok(mb) = value.parse::<usize>() {
+                        let clamped = mb.clamp(1, 1024);
+                        tt.resize(clamped);
+                        println!("info string Hash set to {} MB ({} entries)", clamped, tt.entries.len());
+                    }
+                } else if name_lc == "threads" {
+                    println!("info string Threads option ignored (single thread)");
+                }
             }
             "bench" => {
-                // simple bench: search startpos depth 12?
                 let depth = if tokens.len() > 1 {
                     tokens[1].parse::<u32>().unwrap_or(6)
                 } else {
                     12
                 };
-                bench(depth);
+                bench(depth, &mut tt, &mut history, &mut killers);
             }
             _ => {
                 eprintln!("info string unknown command: {}", cmd);
             }
         }
-        // flush
         use std::io::Write;
         std::io::stdout().flush().unwrap();
     }
@@ -220,14 +243,15 @@ fn print_board(pos: &Position) {
     println!("Halfmove: {} Fullmove: {}", pos.halfmove, pos.fullmove);
 }
 
-fn bench(depth: u32) {
+fn bench(depth: u32, tt: &mut TranspositionTable, history: &mut HistoryTable, killers: &mut KillerTable) {
     let start = std::time::Instant::now();
     let mut pos = Position::new();
     let limits = SearchLimits {
         depth: Some(depth),
         ..Default::default()
     };
-    let (best, score) = search(&mut pos, limits);
+    tt.clear();
+    let (best, score) = search_with_tt(&mut pos, limits, tt, history, killers);
     let elapsed = start.elapsed().as_millis();
-    println!("bench depth {} best {} score {} time {} ms", depth, best.to_uci(), score, elapsed);
+    println!("bench depth {} best {} score {} time {} ms nodes hashfull {}", depth, best.to_uci(), score, elapsed, tt.hashfull());
 }

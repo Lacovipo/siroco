@@ -9,12 +9,16 @@
 ## V0.3 — Null + LMR + Aspiration + Futility (tag v0.3.0)
 - **Null Move:** `R=2/3`, **LMR:** `depth-1 - reduction`, **Aspiration:** `prev ±25`, **Futility:** `+120`.
 
-## V0.4 — Evaluación Enriquecida + Extensión Jaque (actual, v0.4.0)
-- **Eval:** peones aisl/dobl/pasados, pareja alfiles, movilidad, torre abierta, escudo rey (`src/eval.rs:230`).
-- **Búsqueda:** extensión `+1` si `gives_check` (`src/search.rs:496`).
-- Medido bench8 37k→47k (+eval cost).
+## V0.4 — Evaluación Enriquecida + Extensión Jaque (tag v0.4.0)
+- **Eval:** peones aisl/dobl/pasados, pareja alfiles, movilidad, torre abierta, escudo rey.
+- **Búsqueda:** extensión `+1` si `gives_check`.
 
-## V0.5 — Syzygy y Tuning (siguiente)
+## V0.5 — Syzygy + SPSA (actual, v0.5.0)
+- **Syzygy stub** 5 piezas WDL side-to-move, `SyzygyPath` UCI, probe en `negamax`/`qsearch` si `ply>0`.
+- **SPSA** `scripts/tune.py` + ajuste aislado -12→-14, pareja 20→22.
+- Medido perft idéntico, bench similar, `KQK` win en 2 nodos.
+
+## V1.0 HCE — Próximo (siguiente)
 - Syzygy 5 piezas (decisión del autor: implement antes de NNUE para finales). `TB probe` en root y `qsearch` si `halfmove==0` y material <=5.
 - SPSA tuning de `PST` y `MG/EG` valores con 10k partidas.
 

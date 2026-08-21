@@ -8,15 +8,15 @@ Siroco es un motor original diseñado desde cero para escalar de un motor funcio
 
 Origen: criado como criatura de **Muse Spark** (Meta) para competir en el ecosistema local junto a Claude (2700), Kimi, Hy3, GLM, GPT, Gemini.
 
-## Estado actual — v0.4.0 (Evaluación enriquecida + Extensión jaque)
+## Estado actual — v0.5.0 (Syzygy + SPSA)
 
-- **Protocolo UCI completo**: `uci`, `isready`, `ucinewgame`, `position` (startpos/FEN + moves), `go` (depth/movetime/wtime/btime/winc/binc/movestogo/nodes/infinite), `stop`, `quit`, `perft`, `eval`, `d`, `bench`, `setoption Hash`.
+- **Protocolo UCI completo**: `uci`, `isready`, `ucinewgame`, `position` (startpos/FEN + moves), `go` (depth/movetime/wtime/btime/winc/binc/movestogo/nodes/infinite), `stop`, `quit`, `perft`, `eval`, `d`, `bench`, `setoption Hash`, `setoption SyzygyPath`.
 - **Representación**: bitboards `[[u64;6];2]`, mailbox ` [u8;64]`, Zobrist hashing incremental (`src/position.rs:310`), historial para repetición y 50 jugadas, `make_null`/`unmake_null` (`src/position.rs:730`).
-- **Generador**: pseudo-legal + filtro legal, ataques precalculados (knight/king/pawn), sliders por rayos (rook/bishop/queen), en-passant, promoción (4 piezas), enroque con validación de jaques. Perft 16-32M nps `src/movegen.rs:199`.
-- **Evaluación HCE V0.4**: material+PST + **estructura peones (aislados/doblados/pasados)** + **pareja alfiles** + **movilidad N/B/R/Q** + **torre abierta** + **escudo rey** (`src/eval.rs:165`, `230-365`). Tapered MG/EG.
-- **Búsqueda V0.4**: **Null R=2/3**, **LMR** quiet tardíos, **Futility 120**, **Aspiration 25**, **Extensión jaque +1** (`src/search.rs:496`) sobre TT+PVS+killers/history. Bench8 47k/137ms, kiwipete depth6 143k.
-- **Harness**: `cargo test` perft suite + autoplay (200 plies sin ilegales) + `debug::dump_tree`, `scripts/validate.ps1` y `scripts/sprt.py`.
-- **Docs**: `docs/` con visión, arquitectura, TT/PVS/LMR y roadmap. Ver `docs/10-v0.4.md`.
+- **Generador**: pseudo-legal + filtro legal, **excluye captura de rey** (`src/movegen.rs:194`), Perft 16-32M nps.
+- **Evaluación HCE V0.5**: V0.4 + **SPSA tune** aislado -12→-14, pareja 20→22 (`src/eval.rs:230`). Tapered MG/EG.
+- **Búsqueda V0.5**: V0.4 + **Syzygy stub 5 piezas** WDL side-to-move (`src/syzygy.rs:1`), probe en `negamax`/`qsearch` si `ply>0` y `enabled`. KQK win en 2 nodos con Syzygy.
+- **Harness**: `cargo test` 8 tests (5 perft +3 syzygy) + autoplay + `scripts/tune.py` SPSA + `scripts/validate.ps1`.
+- **Docs**: `docs/` 11 ficheros. Ver `docs/11-v0.5.md`.
 
 ## Uso
 
@@ -64,13 +64,13 @@ Salida esperada: todos perft exactos, 5 partidas autoplay sin ilegales, bench es
 **V0.1** — funcional (tag v0.1.0)
 **V0.2** — TT+PVS+killers/history
 **V0.3** — Null+LMR+Aspiration+Futility
-**V0.4** — **actual** Evaluación enriquecida + Extensión jaque
-**V0.5** — (siguiente) Syzygy 5 piezas + SPSA tuning
-**V1.0 HCE** — 3000 CCRL con Lazy SMP
+**V0.4** — Evaluación enriquecida + Extensión jaque
+**V0.5** — **actual** Syzygy + SPSA
+**V1.0 HCE** — (siguiente) Lazy SMP + Syzygy real + SPSA masivo
 **V2.0 NNUE** — red 768->256x2->1
 **V2.1 OpenBench** — SPRT distribuido
 
-Ver `docs/08-roadmap.md`, `docs/05-busqueda.md`, `docs/10-v0.4.md`.
+Ver `docs/08-roadmap.md`, `docs/05-busqueda.md`, `docs/11-v0.5.md`.
 
 ## Arquitectura
 

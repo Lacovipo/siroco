@@ -238,19 +238,18 @@ fn eval_pawn_structure(pos: &Position) -> (i32, i32) {
             black_pawns.push(sq as u8);
         }
     }
-    // Isolated and doubled
+    // Isolated and doubled — tuneado vía SPSA V0.5 (isolated -14/-20, doubled -9/-13)
     for &sq in &white_pawns {
         let f = (sq % 8) as usize;
         let isolated = (f == 0 || white_file[f - 1] == 0) && (f == 7 || white_file[f + 1] == 0);
         if isolated {
-            mg -= 12;
-            eg -= 18;
+            mg -= 14;
+            eg -= 20;
         }
         if white_file[f] > 1 {
-            mg -= 8;
-            eg -= 12;
+            mg -= 9;
+            eg -= 13;
         }
-        // passed?
         if is_passed(sq, Color::White, pos) {
             let rank = sq / 8;
             mg += PASS_MG[rank as usize];
@@ -261,12 +260,12 @@ fn eval_pawn_structure(pos: &Position) -> (i32, i32) {
         let f = (sq % 8) as usize;
         let isolated = (f == 0 || black_file[f - 1] == 0) && (f == 7 || black_file[f + 1] == 0);
         if isolated {
-            mg += 12;
-            eg += 18;
+            mg += 14;
+            eg += 20;
         }
         if black_file[f] > 1 {
-            mg += 8;
-            eg += 12;
+            mg += 9;
+            eg += 13;
         }
         if is_passed(sq, Color::Black, pos) {
             let rank = 7 - (sq / 8) as usize;
@@ -308,12 +307,12 @@ fn eval_bishop_pair(pos: &Position) -> (i32, i32) {
     let mut mg = 0;
     let mut eg = 0;
     if white_bishops >= 2 {
-        mg += 20;
-        eg += 40;
+        mg += 22; // tuneado SPSA +2
+        eg += 42;
     }
     if black_bishops >= 2 {
-        mg -= 20;
-        eg -= 40;
+        mg -= 22;
+        eg -= 42;
     }
     (mg, eg)
 }

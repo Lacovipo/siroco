@@ -194,6 +194,8 @@ pub fn generate_pseudo_legal(pos: &Position, list: &mut MoveList) {
     let occ = pos.occupied_all;
     let own_occ = pos.occupied[us_idx];
     let opp_occ = pos.occupied[them_idx];
+    let opp_king = pos.bb[them_idx][PieceType::King as usize];
+    let capture_mask = opp_occ & !opp_king;
     let empty = !occ;
 
     // Pawns
@@ -229,7 +231,7 @@ pub fn generate_pseudo_legal(pos: &Position, list: &mut MoveList) {
                 if file > 0 {
                     let to = from + 7;
                     if rank < 7 {
-                        if opp_occ & (1u64 << to) != 0 {
+                        if capture_mask & (1u64 << to) != 0 {
                             if rank == 6 {
                                 for promo in [PieceType::Queen, PieceType::Rook, PieceType::Bishop, PieceType::Knight] {
                                     list.push(Move::new(from, to, Some(promo)));
@@ -245,7 +247,7 @@ pub fn generate_pseudo_legal(pos: &Position, list: &mut MoveList) {
                 if file < 7 {
                     let to = from + 9;
                     if rank < 7 {
-                        if opp_occ & (1u64 << to) != 0 {
+                        if capture_mask & (1u64 << to) != 0 {
                             if rank == 6 {
                                 for promo in [PieceType::Queen, PieceType::Rook, PieceType::Bishop, PieceType::Knight] {
                                     list.push(Move::new(from, to, Some(promo)));
@@ -280,7 +282,7 @@ pub fn generate_pseudo_legal(pos: &Position, list: &mut MoveList) {
                 }
                 if file > 0 {
                     let to = from - 9;
-                    if opp_occ & (1u64 << to) != 0 {
+                    if capture_mask & (1u64 << to) != 0 {
                         if rank == 1 {
                             for promo in [PieceType::Queen, PieceType::Rook, PieceType::Bishop, PieceType::Knight] {
                                 list.push(Move::new(from, to, Some(promo)));
@@ -294,7 +296,7 @@ pub fn generate_pseudo_legal(pos: &Position, list: &mut MoveList) {
                 }
                 if file < 7 {
                     let to = from - 7;
-                    if opp_occ & (1u64 << to) != 0 {
+                    if capture_mask & (1u64 << to) != 0 {
                         if rank == 1 {
                             for promo in [PieceType::Queen, PieceType::Rook, PieceType::Bishop, PieceType::Knight] {
                                 list.push(Move::new(from, to, Some(promo)));
@@ -315,7 +317,7 @@ pub fn generate_pseudo_legal(pos: &Position, list: &mut MoveList) {
     let mut bb = knights;
     while bb != 0 {
         let from = pop_lsb(&mut bb);
-        let attacks = knight_attacks(from) & !own_occ;
+        let attacks = knight_attacks(from) & !own_occ & !opp_king;
         add_moves(list, from, attacks);
     }
 
@@ -324,7 +326,7 @@ pub fn generate_pseudo_legal(pos: &Position, list: &mut MoveList) {
     let mut bb = bishops;
     while bb != 0 {
         let from = pop_lsb(&mut bb);
-        let attacks = bishop_attacks(from, occ) & !own_occ;
+        let attacks = bishop_attacks(from, occ) & !own_occ & !opp_king;
         add_moves(list, from, attacks);
     }
 
@@ -333,7 +335,7 @@ pub fn generate_pseudo_legal(pos: &Position, list: &mut MoveList) {
     let mut bb = rooks;
     while bb != 0 {
         let from = pop_lsb(&mut bb);
-        let attacks = rook_attacks(from, occ) & !own_occ;
+        let attacks = rook_attacks(from, occ) & !own_occ & !opp_king;
         add_moves(list, from, attacks);
     }
 
@@ -342,13 +344,13 @@ pub fn generate_pseudo_legal(pos: &Position, list: &mut MoveList) {
     let mut bb = queens;
     while bb != 0 {
         let from = pop_lsb(&mut bb);
-        let attacks = queen_attacks(from, occ) & !own_occ;
+        let attacks = queen_attacks(from, occ) & !own_occ & !opp_king;
         add_moves(list, from, attacks);
     }
 
     // King
     let king_sq = pos.king_square(us);
-    let king_att = king_attacks(king_sq) & !own_occ;
+    let king_att = king_attacks(king_sq) & !own_occ & !opp_king;
     add_moves(list, king_sq, king_att);
 
     // Castling (pseudo-legal, need to check not in check and squares not attacked)

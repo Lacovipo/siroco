@@ -2,13 +2,14 @@ use crate::history::{HistoryTable, KillerTable};
 use crate::perft::{perft, perft_divide};
 use crate::position::Position;
 use crate::search::{search_with_tt, SearchLimits};
+use crate::syzygy::SyzygyTablebase;
 use crate::tt::TranspositionTable;
 use crate::types::*;
 
 use std::io::{self, BufRead};
 
 const NAME: &str = "Siroco";
-const VERSION: &str = "0.4.0";
+const VERSION: &str = "0.5.0";
 const AUTHOR: &str = "Muse Spark";
 
 pub fn run() {
@@ -16,6 +17,7 @@ pub fn run() {
     let mut tt = TranspositionTable::new(16);
     let mut history = HistoryTable::new();
     let mut killers = KillerTable::new();
+    let mut syzygy = SyzygyTablebase::new();
     let stdin = io::stdin();
     let mut line = String::new();
 
@@ -40,6 +42,7 @@ pub fn run() {
                 println!("id author {}", AUTHOR);
                 println!("option name Hash type spin default 16 min 1 max 1024");
                 println!("option name Threads type spin default 1 min 1 max 1");
+                println!("option name SyzygyPath type string default <empty>");
                 println!("uciok");
             }
             "isready" => {
@@ -109,7 +112,7 @@ pub fn run() {
             "go" => {
                 let params = tokens[1..].to_vec();
                 let limits = SearchLimits::from_go_params(&params);
-                let (best, _score) = search_with_tt(&mut pos, limits, &mut tt, &mut history, &mut killers);
+                let (best, _score) = search_with_tt(&mut pos, limits, &mut tt, &mut history, &mut killers, &syzygy);
                 if best.is_null() {
                     println!("bestmove 0000");
                 } else {
@@ -121,11 +124,24 @@ pub fn run() {
             "d" | "display" | "board" => {
                 print_board(&pos);
                 println!("Hashfull: {} TT hits: {} stores: {}", tt.hashfull(), tt.hits, tt.stores);
+                if syzygy.is_enabled() {
+                    println!("Syzygy: enabled path={:?}", syzygy.path);
+                    if let Some(wdl) = crate::syzygy::probe_wdl(&pos) {
+                        println!("Syzygy WDL: {}", wdl);
+                    } else {
+                        println!("Syzygy WDL: unknown");
+                    }
+                }
             }
             "eval" => {
                 let score = crate::eval::evaluate(&pos);
                 println!("info string eval {} (side to move)", score);
                 println!("FEN: {}", pos.to_fen());
+                if syzygy.is_enabled() {
+                    if let Some(wdl) = crate::syzygy::probe_wdl(&pos) {
+                        println!("info string syzygy wdl {}", wdl);
+                    }
+                }
             }
             "perft" => {
                 if tokens.len() < 2 {
@@ -157,7 +173,6 @@ pub fn run() {
                 println!("{}", pos.to_fen());
             }
             "setoption" => {
-                // setoption name <id> value <x>
                 let mut name = String::new();
                 let mut value = String::new();
                 let mut reading_name = false;
@@ -193,6 +208,13 @@ pub fn run() {
                     }
                 } else if name_lc == "threads" {
                     println!("info string Threads option ignored (single thread)");
+                } else if name_lc == "syzygypath" {
+                    syzygy.set_path(value.clone());
+                    if syzygy.is_enabled() {
+                        println!("info string SyzygyPath set to {:?}", syzygy.path);
+                    } else {
+                        println!("info string Syzygy disabled");
+                    }
                 }
             }
             "bench" => {
@@ -201,7 +223,7 @@ pub fn run() {
                 } else {
                     12
                 };
-                bench(depth, &mut tt, &mut history, &mut killers);
+                bench(depth, &mut tt, &mut history, &mut killers, &syzygy);
             }
             _ => {
                 eprintln!("info string unknown command: {}", cmd);
@@ -243,7 +265,7 @@ fn print_board(pos: &Position) {
     println!("Halfmove: {} Fullmove: {}", pos.halfmove, pos.fullmove);
 }
 
-fn bench(depth: u32, tt: &mut TranspositionTable, history: &mut HistoryTable, killers: &mut KillerTable) {
+fn bench(depth: u32, tt: &mut TranspositionTable, history: &mut HistoryTable, killers: &mut KillerTable, syzygy: &SyzygyTablebase) {
     let start = std::time::Instant::now();
     let mut pos = Position::new();
     let limits = SearchLimits {
@@ -251,7 +273,7 @@ fn bench(depth: u32, tt: &mut TranspositionTable, history: &mut HistoryTable, ki
         ..Default::default()
     };
     tt.clear();
-    let (best, score) = search_with_tt(&mut pos, limits, tt, history, killers);
+    let (best, score) = search_with_tt(&mut pos, limits, tt, history, killers, syzygy);
     let elapsed = start.elapsed().as_millis();
     println!("bench depth {} best {} score {} time {} ms nodes hashfull {}", depth, best.to_uci(), score, elapsed, tt.hashfull());
 }

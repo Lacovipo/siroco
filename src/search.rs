@@ -2,6 +2,7 @@ use crate::eval::evaluate;
 use crate::history::{HistoryTable, KillerTable};
 use crate::movegen::{generate_legal, is_square_attacked};
 use crate::position::Position;
+use crate::syzygy::{probe_wdl, wdl_to_score, SyzygyTablebase};
 use crate::tt::{TranspositionTable, TT_EXACT, TT_LOWER, TT_UPPER};
 use crate::types::*;
 
@@ -92,6 +93,7 @@ struct Searcher<'a> {
     tt: &'a mut TranspositionTable,
     history: &'a mut HistoryTable,
     killers: &'a mut KillerTable,
+    syzygy: &'a SyzygyTablebase,
     limits: SearchLimits,
     start: Instant,
     soft_limit: Option<Duration>,
@@ -232,6 +234,13 @@ fn qsearch(searcher: &mut Searcher, mut alpha: i32, beta: i32, ply: usize) -> i3
         return 0;
     }
 
+    // Syzygy probe in qsearch
+    if searcher.syzygy.is_enabled() && searcher.pos.occupied_all.count_ones() <= 5 {
+        if let Some(wdl) = probe_wdl(searcher.pos) {
+            return wdl_to_score(wdl, ply as i32);
+        }
+    }
+
     let hash = searcher.pos.hash;
     if let Some(entry) = searcher.tt.probe(hash) {
         let (score, _, _, flag) = searcher.tt.retrieve_with_correction(entry, ply as i32);
@@ -366,20 +375,28 @@ fn negamax(
         }
     }
 
+    // Syzygy probe (not at root, to keep bestmove search)
+    if ply > 0 && searcher.syzygy.is_enabled() && searcher.pos.occupied_all.count_ones() <= 5 {
+        if let Some(wdl) = probe_wdl(searcher.pos) {
+            let score = wdl_to_score(wdl, ply as i32);
+            // WDL is exact, store in TT and return
+            // But ensure we don't override mate scores incorrectly; just return
+            return score;
+        }
+    }
+
     let in_check = is_in_check(searcher.pos);
     let hash = searcher.pos.hash;
     let mut tt_move = Move::NULL;
     let mut tt_score = 0;
     let mut tt_flag = 0;
     let mut tt_depth = 0;
-    let mut tt_hit = false;
     if let Some(entry) = searcher.tt.probe(hash) {
         let (score, mv, d, flag) = searcher.tt.retrieve_with_correction(entry, ply as i32);
         tt_move = mv;
         tt_score = score;
         tt_flag = flag;
         tt_depth = d;
-        tt_hit = true;
         if tt_depth >= depth as u8 {
             if tt_flag == TT_EXACT {
                 if ply == 0 && !tt_move.is_null() {
@@ -420,7 +437,6 @@ fn negamax(
         }
     }
 
-    // Futility pruning setup for shallow depths
     let stand_pat = if !in_check && depth <= 2 {
         evaluate(searcher.pos)
     } else {
@@ -458,7 +474,6 @@ fn negamax(
         let is_cap = searcher.is_capture(mv) || mv.is_promotion();
         let is_killer = searcher.killers.is_killer(ply, mv);
 
-        // Futility pruning: depth 1, not in check, quiet, not killer, and stand_pat + margin <= alpha
         if depth == 1
             && !in_check
             && !is_cap
@@ -474,8 +489,6 @@ fn negamax(
         let mut is_reduced = false;
         let mut reduction = 0;
 
-        // LMR: Late Move Reduction for quiets after first few moves
-        // (no reduction if gives check — check after make)
         if depth >= 3
             && moves_searched >= 4
             && !is_cap
@@ -493,23 +506,17 @@ fn negamax(
         }
 
         searcher.pos.make_move(mv);
-        // Check extension: if move gives check, extend 1 ply
         let gives_check = is_in_check(searcher.pos);
         let mut effective_depth = new_depth;
         if gives_check {
             effective_depth += 1;
-            // if we reduced and gives check, undo reduction
             if is_reduced {
                 is_reduced = false;
-                effective_depth = depth; // actually depth (since new_depth was depth-1 - red, +1 => depth - red)
-                // for simplicity, set to depth-1 if gave check (no reduction)
-                effective_depth = depth - 1 + 1; // = depth
-                // but cap to depth
+                effective_depth = depth; // undo reduction + extension = depth
                 if effective_depth > depth {
                     effective_depth = depth;
                 }
             } else {
-                // already not reduced, just extension
                 if effective_depth > depth {
                     effective_depth = depth;
                 }
@@ -519,10 +526,8 @@ fn negamax(
         if moves_searched == 0 {
             score = -negamax(searcher, effective_depth, -beta, -alpha, ply + 1, true);
         } else {
-            // PVS null window, with possible LMR
             let mut null_score = -negamax(searcher, effective_depth, -alpha - 1, -alpha, ply + 1, true);
             if is_reduced && null_score > alpha {
-                // re-search at full depth if reduced search failed high
                 null_score = -negamax(searcher, depth - 1, -alpha - 1, -alpha, ply + 1, true);
             }
             if null_score > alpha && null_score < beta {
@@ -614,7 +619,8 @@ pub fn search(pos: &mut Position, limits: SearchLimits) -> (Move, i32) {
     let mut tt = TranspositionTable::new(16);
     let mut history = HistoryTable::new();
     let mut killers = KillerTable::new();
-    search_with_tt(pos, limits, &mut tt, &mut history, &mut killers)
+    let syzygy = SyzygyTablebase::new();
+    search_with_tt(pos, limits, &mut tt, &mut history, &mut killers, &syzygy)
 }
 
 pub fn search_with_tt(
@@ -623,6 +629,7 @@ pub fn search_with_tt(
     tt: &mut TranspositionTable,
     history: &mut HistoryTable,
     killers: &mut KillerTable,
+    syzygy: &SyzygyTablebase,
 ) -> (Move, i32) {
     let start = Instant::now();
     let mut soft_limit: Option<Duration> = None;
@@ -672,6 +679,7 @@ pub fn search_with_tt(
         tt,
         history,
         killers,
+        syzygy,
         limits: limits.clone(),
         start,
         soft_limit,
@@ -688,7 +696,6 @@ pub fn search_with_tt(
         return (Move::NULL, 0);
     }
 
-    // Aspiration windows
     let mut prev_score = 0;
     let mut delta = 25;
 
@@ -707,7 +714,6 @@ pub fn search_with_tt(
                 break;
             }
             if score <= alpha {
-                // fail low
                 delta *= 2;
                 if delta > 500 {
                     alpha = -INF;
@@ -717,12 +723,9 @@ pub fn search_with_tt(
                 }
                 alpha = (prev_score - delta).max(-INF);
                 beta = (prev_score + delta).min(INF);
-                // also need to keep beta wider? For fail low we expand alpha down
-                // continue loop to re-search
                 if score > alpha && score < beta {
                     break;
                 }
-                // else continue
             } else if score >= beta {
                 delta *= 2;
                 if delta > 500 {
@@ -740,25 +743,23 @@ pub fn search_with_tt(
                 break;
             }
             if delta > 200 {
-                // fallback to full window to avoid infinite loops
                 alpha = -INF;
                 beta = INF;
             }
         }
 
         if searcher.should_stop() {
-            // if we stopped during search, don't update best
             if searcher.best_move.is_null() {
                 break;
             }
             best_move = searcher.best_move;
-            best_score = prev_score; // keep old
+            best_score = prev_score;
             break;
         }
         best_move = searcher.best_move;
         best_score = score;
         prev_score = best_score;
-        delta = 25; // reset for next depth
+        delta = 25;
 
         let elapsed = searcher.start.elapsed();
         let elapsed_ms = elapsed.as_millis() as u64;

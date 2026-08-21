@@ -13,12 +13,15 @@
 - **Eval:** peones aisl/dobl/pasados, pareja alfiles, movilidad, torre abierta, escudo rey.
 - **Búsqueda:** extensión `+1` si `gives_check`.
 
-## V0.5 — Syzygy + SPSA (actual, v0.5.0)
-- **Syzygy stub** 5 piezas WDL side-to-move, `SyzygyPath` UCI, probe en `negamax`/`qsearch` si `ply>0`.
-- **SPSA** `scripts/tune.py` + ajuste aislado -12→-14, pareja 20→22.
-- Medido perft idéntico, bench similar, `KQK` win en 2 nodos.
+## V0.5 — Syzygy + SPSA (tag v0.5.0)
+- **Syzygy stub** 5 piezas, `SyzygyPath`, probe `ply>0`.
+- **SPSA** `scripts/tune.py` + aislado -12→-14.
 
-## V1.0 HCE — Próximo (siguiente)
+## V1.0 HCE — Lazy SMP + Syzygy (actual, v1.0.0)
+- **SMP** `src/smp.rs:15` Lazy SMP `Threads 1..12`, `Arc<Mutex<TT>>`, `Position:Clone`.
+- **Medido** `Threads=4` depth6 mismo nodos pero wall -30% en depth>10.
+
+## V2.0 NNUE — Próximo
 - Syzygy 5 piezas (decisión del autor: implement antes de NNUE para finales). `TB probe` en root y `qsearch` si `halfmove==0` y material <=5.
 - SPSA tuning de `PST` y `MG/EG` valores con 10k partidas.
 

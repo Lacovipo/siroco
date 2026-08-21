@@ -2,22 +2,25 @@ use crate::history::{HistoryTable, KillerTable};
 use crate::perft::{perft, perft_divide};
 use crate::position::Position;
 use crate::search::{search_with_tt, SearchLimits};
+use crate::smp::search_parallel;
 use crate::syzygy::SyzygyTablebase;
 use crate::tt::TranspositionTable;
 use crate::types::*;
 
 use std::io::{self, BufRead};
+use std::sync::{Arc, Mutex};
 
 const NAME: &str = "Siroco";
-const VERSION: &str = "0.5.0";
+const VERSION: &str = "1.0.0";
 const AUTHOR: &str = "Muse Spark";
 
 pub fn run() {
     let mut pos = Position::new();
-    let mut tt = TranspositionTable::new(16);
+    let tt = Arc::new(Mutex::new(TranspositionTable::new(16)));
     let mut history = HistoryTable::new();
     let mut killers = KillerTable::new();
     let mut syzygy = SyzygyTablebase::new();
+    let mut num_threads: usize = 1;
     let stdin = io::stdin();
     let mut line = String::new();
 
@@ -41,7 +44,7 @@ pub fn run() {
                 println!("id name {} {}", NAME, VERSION);
                 println!("id author {}", AUTHOR);
                 println!("option name Hash type spin default 16 min 1 max 1024");
-                println!("option name Threads type spin default 1 min 1 max 1");
+                println!("option name Threads type spin default 1 min 1 max 12");
                 println!("option name SyzygyPath type string default <empty>");
                 println!("uciok");
             }
@@ -50,7 +53,7 @@ pub fn run() {
             }
             "ucinewgame" => {
                 pos = Position::new();
-                tt.clear();
+                tt.lock().unwrap().clear();
                 history.clear();
                 killers.clear();
             }
@@ -112,7 +115,14 @@ pub fn run() {
             "go" => {
                 let params = tokens[1..].to_vec();
                 let limits = SearchLimits::from_go_params(&params);
-                let (best, _score) = search_with_tt(&mut pos, limits, &mut tt, &mut history, &mut killers, &syzygy);
+                let (best, _score) = if num_threads <= 1 {
+                    let mut tt_guard = tt.lock().unwrap();
+                    search_with_tt(&mut pos, limits, &mut tt_guard, &mut history, &mut killers, &syzygy)
+                } else {
+                    // Lazy SMP: clone pos, share TT via Arc, syzygy via Arc
+                    let syzygy_arc = Arc::new(syzygy.clone());
+                    search_parallel(&pos, limits, Arc::clone(&tt), num_threads, syzygy_arc)
+                };
                 if best.is_null() {
                     println!("bestmove 0000");
                 } else {
@@ -123,7 +133,9 @@ pub fn run() {
             "quit" | "exit" => break,
             "d" | "display" | "board" => {
                 print_board(&pos);
-                println!("Hashfull: {} TT hits: {} stores: {}", tt.hashfull(), tt.hits, tt.stores);
+                let tt_guard = tt.lock().unwrap();
+                println!("Hashfull: {} TT hits: {} stores: {}", tt_guard.hashfull(), tt_guard.hits, tt_guard.stores);
+                println!("Threads: {}", num_threads);
                 if syzygy.is_enabled() {
                     println!("Syzygy: enabled path={:?}", syzygy.path);
                     if let Some(wdl) = crate::syzygy::probe_wdl(&pos) {
@@ -203,11 +215,15 @@ pub fn run() {
                 if name_lc == "hash" {
                     if let Ok(mb) = value.parse::<usize>() {
                         let clamped = mb.clamp(1, 1024);
-                        tt.resize(clamped);
-                        println!("info string Hash set to {} MB ({} entries)", clamped, tt.entries.len());
+                        tt.lock().unwrap().resize(clamped);
+                        println!("info string Hash set to {} MB", clamped);
                     }
                 } else if name_lc == "threads" {
-                    println!("info string Threads option ignored (single thread)");
+                    if let Ok(t) = value.parse::<usize>() {
+                        let clamped = t.clamp(1, 12);
+                        num_threads = clamped;
+                        println!("info string Threads set to {}", num_threads);
+                    }
                 } else if name_lc == "syzygypath" {
                     syzygy.set_path(value.clone());
                     if syzygy.is_enabled() {
@@ -223,7 +239,7 @@ pub fn run() {
                 } else {
                     12
                 };
-                bench(depth, &mut tt, &mut history, &mut killers, &syzygy);
+                bench(depth, &tt, &mut history, &mut killers, &syzygy);
             }
             _ => {
                 eprintln!("info string unknown command: {}", cmd);
@@ -265,15 +281,15 @@ fn print_board(pos: &Position) {
     println!("Halfmove: {} Fullmove: {}", pos.halfmove, pos.fullmove);
 }
 
-fn bench(depth: u32, tt: &mut TranspositionTable, history: &mut HistoryTable, killers: &mut KillerTable, syzygy: &SyzygyTablebase) {
+fn bench(depth: u32, tt: &Arc<Mutex<TranspositionTable>>, history: &mut HistoryTable, killers: &mut KillerTable, syzygy: &SyzygyTablebase) {
     let start = std::time::Instant::now();
     let mut pos = Position::new();
     let limits = SearchLimits {
         depth: Some(depth),
         ..Default::default()
     };
-    tt.clear();
-    let (best, score) = search_with_tt(&mut pos, limits, tt, history, killers, syzygy);
+    tt.lock().unwrap().clear();
+    let (best, score) = search_with_tt(&mut pos, limits, &mut tt.lock().unwrap(), history, killers, syzygy);
     let elapsed = start.elapsed().as_millis();
-    println!("bench depth {} best {} score {} time {} ms nodes hashfull {}", depth, best.to_uci(), score, elapsed, tt.hashfull());
+    println!("bench depth {} best {} score {} time {} ms nodes hashfull {}", depth, best.to_uci(), score, elapsed, tt.lock().unwrap().hashfull());
 }

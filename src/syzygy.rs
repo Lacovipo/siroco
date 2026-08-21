@@ -6,6 +6,7 @@ use crate::types::*;
 /// Retorna Some(2)=win, Some(1)=draw, Some(0)=loss desde perspectiva del lado a mover
 /// None = desconocido (fallback a búsqueda)
 /// Cuando se disponga de ficheros Syzygy, aquí se llamaría a shakmaty-syzygy
+#[derive(Clone, Debug)]
 pub struct SyzygyTablebase {
     pub path: Option<String>,
     pub enabled: bool,

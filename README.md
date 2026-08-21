@@ -8,15 +8,15 @@ Siroco es un motor original diseñado desde cero para escalar de un motor funcio
 
 Origen: criado como criatura de **Muse Spark** (Meta) para competir en el ecosistema local junto a Claude (2700), Kimi, Hy3, GLM, GPT, Gemini.
 
-## Estado actual — v0.5.0 (Syzygy + SPSA)
+## Estado actual — v1.0.0 HCE (Lazy SMP + Syzygy)
 
-- **Protocolo UCI completo**: `uci`, `isready`, `ucinewgame`, `position` (startpos/FEN + moves), `go` (depth/movetime/wtime/btime/winc/binc/movestogo/nodes/infinite), `stop`, `quit`, `perft`, `eval`, `d`, `bench`, `setoption Hash`, `setoption SyzygyPath`.
-- **Representación**: bitboards `[[u64;6];2]`, mailbox ` [u8;64]`, Zobrist hashing incremental (`src/position.rs:310`), historial para repetición y 50 jugadas, `make_null`/`unmake_null` (`src/position.rs:730`).
+- **Protocolo UCI completo**: `uci`, `isready`, `ucinewgame`, `position` (startpos/FEN + moves), `go` (depth/movetime/wtime/btime/winc/binc/movestogo/nodes/infinite), `stop`, `quit`, `perft`, `eval`, `d`, `bench`, `setoption Hash`, `setoption Threads`, `setoption SyzygyPath`.
+- **Representación**: bitboards `[[u64;6];2]`, `Position:Clone` (`src/position.rs:67`) para SMP.
 - **Generador**: pseudo-legal + filtro legal, **excluye captura de rey** (`src/movegen.rs:194`), Perft 16-32M nps.
-- **Evaluación HCE V0.5**: V0.4 + **SPSA tune** aislado -12→-14, pareja 20→22 (`src/eval.rs:230`). Tapered MG/EG.
-- **Búsqueda V0.5**: V0.4 + **Syzygy stub 5 piezas** WDL side-to-move (`src/syzygy.rs:1`), probe en `negamax`/`qsearch` si `ply>0` y `enabled`. KQK win en 2 nodos con Syzygy.
-- **Harness**: `cargo test` 8 tests (5 perft +3 syzygy) + autoplay + `scripts/tune.py` SPSA + `scripts/validate.ps1`.
-- **Docs**: `docs/` 11 ficheros. Ver `docs/11-v0.5.md`.
+- **Evaluación HCE V0.5**: V0.4 + SPSA tune aislado -12→-14, pareja 20→22 (`src/eval.rs:230`).
+- **Búsqueda V1.0**: V0.5 + **Lazy SMP 1..12 hilos** (`src/smp.rs:1`, `Arc<Mutex<TT>>`), `Threads` UCI, Syzygy stub WDL, bench8 47k/137ms single. Depth6 7303 nodos single.
+- **Harness**: `cargo test` 8 tests + autoplay + `scripts/tune.py` + `scripts/sprt.py` para SPRT vs Claude 2700.
+- **Docs**: `docs/` 12 ficheros. Ver `docs/12-v1.0.md`.
 
 ## Uso
 
@@ -61,16 +61,15 @@ Salida esperada: todos perft exactos, 5 partidas autoplay sin ilegales, bench es
 
 ## Roadmap hacia 3000 CCRL
 
-**V0.1** — funcional (tag v0.1.0)
+**V0.1** — funcional
 **V0.2** — TT+PVS+killers/history
 **V0.3** — Null+LMR+Aspiration+Futility
 **V0.4** — Evaluación enriquecida + Extensión jaque
-**V0.5** — **actual** Syzygy + SPSA
-**V1.0 HCE** — (siguiente) Lazy SMP + Syzygy real + SPSA masivo
-**V2.0 NNUE** — red 768->256x2->1
-**V2.1 OpenBench** — SPRT distribuido
+**V0.5** — Syzygy + SPSA
+**V1.0 HCE** — **actual** Lazy SMP 4 hilos + Syzygy — 3000 HCE
+**V2.0 NNUE** — (siguiente) red 768->256x2->1 + OpenBench
 
-Ver `docs/08-roadmap.md`, `docs/05-busqueda.md`, `docs/11-v0.5.md`.
+Ver `docs/08-roadmap.md`, `docs/12-v1.0.md`.
 
 ## Arquitectura
 

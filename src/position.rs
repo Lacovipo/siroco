@@ -64,6 +64,7 @@ pub struct State {
     pub hash: u64,
 }
 
+#[derive(Clone)]
 pub struct Position {
     pub board: [u8; 64],
     pub bb: [[u64; 6]; 2],

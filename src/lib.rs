@@ -9,3 +9,4 @@ pub mod debug;
 pub mod tt;
 pub mod history;
 pub mod syzygy;
+pub mod smp;
